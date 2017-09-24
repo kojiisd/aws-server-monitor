@@ -34,31 +34,43 @@ def check_target_servers(target_json):
     data = json.loads(target_json)
     servers = data['servers']
 
-    error_servers = []
+    status_changed_servers = []
 
     for server in servers:
         name = server['name']
         url = server['url']
+        status_ok = check_status(url, name)
         try:
             res = requests.get(url)
             if res.status_code != 200:
-                error_servers.append(server)
+                if status_ok != False:
+                    server['status'] = "Error"
+                    status_changed_servers.append(server)
+                add_server(url, name, False)
+            else:
+                if status_ok == False:
+                    server['status'] = "Recover"
+                    status_changed_servers.append(server)
+                add_server(url, name, True)
         except Exception:
-            error_servers.append(server)
+            if status_ok != False:
+                server['status'] = "Error"
+                status_changed_servers.append(server)
+            add_server(url, name, False)
 
-    if len(error_servers) == 0:
+    if len(status_changed_servers) == 0:
         print("Successful finished servers checking")
     else:
-        response = send_error(name, url, error_servers)
-        print("Error occured:")
+        response = send_error(name, url, status_changed_servers)
+        print("Status Changed:")
         print(response)
-        print(error_servers)
+        print(status_changed_servers)
 
-def send_error(name, url, error_servers):
+def send_error(name, url, status_changed_servers):
     sns = boto3.client('sns')
-    sns_message = "Error happens:\n\n" + json.dumps(error_servers, indent=4, separators=(',', ': '))
+    sns_message = "Server Status Changed happens:\n\n" + json.dumps(status_changed_servers, indent=4, separators=(',', ': '))
 
-    subject = '[ServerMonitor] Error happens'
+    subject = '[ServerMonitor] Server Status Changed happens'
     response = sns.publish(
         TopicArn=SNS_TOPICS_NAME,
         Message=sns_message,
@@ -69,14 +81,16 @@ def send_error(name, url, error_servers):
 
 def check_status(url, name):
     status_ok = True
-    items = dynamodb.Table(DDB_TABLE_NAME).get_item(
-            Key={
-                 "url": "http://www.google.com",
-                 "name": "google"
-            }
-        )
-
-    status_ok = items['Item']['status']
+    try:
+        items = dynamodb.Table(DDB_TABLE_NAME).get_item(
+                Key={
+                    "url": url,
+                    "name": name
+                }
+            )
+        status_ok = items['Item']['status']
+    except:
+        status_ok = None
     return status_ok
 
 def add_server(url, name, status):
